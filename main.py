@@ -18,6 +18,7 @@ class FileResult:
     spectrogram_tensor: tf.Tensor
     sample_rate: np.int32
     category: Category
+    num_bins: np.int32
 
 def read_audio_files(directory: Path) -> list[FileResult]:
     result = []
@@ -38,13 +39,26 @@ def read_audio_files(directory: Path) -> list[FileResult]:
                 category |= Category.Generator
             if "vehicle" in path:
                 category |= Category.Vehicle
-            result.append(FileResult(audio, spectrogram, sample_rate_int, category))
+            result.append(FileResult(audio, spectrogram, sample_rate_int, category, stft.shape[-1]))
     return result
+
+def convert_to_mel(file_res):
+    num_spectrogram_bins = file_res.num_bins
+    lower_edge_hertz, upper_edge_hertz, num_mel_bins = 0.0, 1000.0, 80
+    linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
+    num_mel_bins, num_spectrogram_bins, file_res.sample_rate, lower_edge_hertz,
+    upper_edge_hertz)
+    mel_spectrograms = tf.tensordot(
+    file_res.spectrogram_tensor, linear_to_mel_weight_matrix, 1)
+    mel_spectrograms.set_shape(file_res.spectrogram_tensor.shape[:-1].concatenate(
+    linear_to_mel_weight_matrix.shape[-1:]))
+    file_res.spectrogram_tensor = mel_spectrograms
 
 if __name__ == "__main__":
     directory = Path(__file__).parent / "data"
     results = read_audio_files(directory)
     print("Results:", results)
+    convert_to_mel(results[0])
 
 """
 tfio.audio.spectrogram(
