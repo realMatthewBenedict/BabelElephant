@@ -115,25 +115,7 @@ def train_noise_cnn(
     learning_rate: float = 1e-3,
     validation_split: float = 0.1,
 ) -> tuple[tf.keras.Model, float]:
-    """
 
-    Args:
-        file_results: Iterable of FileResult-like objects. Each object must expose:
-            - spectrogram_tensor: 2D tf.Tensor [time, frequency]
-            - sample_rate: int sample rate used to compute the spectrogram
-            - rumble_frames: list[tuple[int, int]] of sound intervals in spectrogram frames
-        patch_size: Size of the square spectrogram patches.
-        patches_per_file: Number of noise patches to sample from each file.
-        epochs: Number of training epochs.
-        batch_size: Batch size for training.
-        learning_rate: Learning rate for the optimizer.
-        validation_split: Fraction of patch data held out for validation.
-
-    Returns:
-        A tuple of (trained_model, reconstruction_threshold).
-        The threshold is computed from training reconstruction error and can be used
-        to flag pixels/patches that are likely noise.
-    """
     all_patches = []
     for result in file_results:
         patches = _sample_noise_patches(result, patch_size, patches_per_file)
