@@ -90,7 +90,7 @@ def _sample_noise_patches(
 
     return np.stack(patches, axis=0)
 
-
+"""autoencoder"""
 def _build_autoencoder(input_shape: Tuple[int, int, int]) -> tf.keras.Model:
     inputs = tf.keras.Input(shape=input_shape)
     x = tf.keras.layers.Conv2D(32, 3, activation="relu", padding="same")(inputs)
@@ -123,7 +123,7 @@ def train_noise_cnn(
             all_patches.append(patches)
 
     if not all_patches:
-        raise ValueError("No noise patches were extracted. Check rumble_frames and spectrogram shapes.")
+        raise ValueError("No noise patches extracted check frames and spectrogram shape")
 
     x_train = np.concatenate(all_patches, axis=0).astype(np.float32)
     max_value = np.maximum(np.max(x_train), 1e-8)
@@ -152,13 +152,12 @@ def train_noise_cnn(
 
     return model, threshold
 
-
+    """dataset is noise only for training"""
 def make_noise_dataset(
     file_results: Iterable[FileResultLike],
     patch_size: Tuple[int, int] = (32, 32),
     patches_per_file: int = 256,
 ) -> tf.data.Dataset:
-    """Build a tf.data.Dataset of normalized noise-only spectrogram patches."""
     all_patches = []
     for result in file_results:
         patches = _sample_noise_patches(result, patch_size, patches_per_file)
@@ -166,7 +165,7 @@ def make_noise_dataset(
             all_patches.append(patches)
 
     if not all_patches:
-        raise ValueError("No noise patches were extracted. Check rumble_frames and spectrogram shapes.")
+        raise ValueError("No noise patches extracted check frames and spectrogram shape")
 
     x = np.concatenate(all_patches, axis=0).astype(np.float32)
     max_value = np.maximum(np.max(x), 1e-8)
