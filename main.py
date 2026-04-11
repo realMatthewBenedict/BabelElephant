@@ -2,14 +2,9 @@ from dataclasses import dataclass
 from enum import IntFlag
 from pathlib import Path
 
+import numpy as np
 import sklearn
-import warnings
-warnings.filterwarnings("ignore", message="file system plugins")
-warnings.filterwarnings("ignore", message="libtensorflow_io")
-
 import tensorflow as tf
-import tensorflow_io as tfio
-
 
 class Category(IntFlag):
     Airplane = 1 << 0
@@ -19,32 +14,37 @@ class Category(IntFlag):
 
 @dataclass
 class FileResult:
-    audioTensor: tf.Tensor
-    sampleTensor: tf.Tensor
+    audio_tensor: tf.Tensor
+    spectrogram_tensor: tf.Tensor
+    sample_rate: np.int32
     category: Category
 
-def read_audio_files(directory: Path) -> [FileResult]:
+def read_audio_files(directory: Path) -> list[FileResult]:
     result = []
     for file_path in directory.iterdir():
-        if file_path.is_file():
-            audio_bytes = tf.io.read_file(file_path)
+        if file_path.suffix.lower() == '.wav':
+            audio_bytes = tf.io.read_file(str(file_path))
             audio, sample_rate = tf.audio.decode_wav(audio_bytes)
+            sample_rate_int = sample_rate.numpy()
+            stft = tf.signal.stft(audio, frame_length=512, frame_step=256, fft_length=512)
+            spectrogram = tf.abs(stft)
             category = Category(0)
-            path = file_path.to_lower()
-            if path.contains("airplane"):
+            path = file_path.name.lower()
+            if "airplane" in path:
                 category |= Category.Airplane
-            if path.contains("background"):
+            if "background" in path:
                 category |= Category.Background
-            if path.contains("generator"):
-                category |= Category.Background
-            if path.contains("vehicle"):
+            if "generator" in path:
+                category |= Category.Generator
+            if "vehicle" in path:
                 category |= Category.Vehicle
-            result.append(FileResult(audioTensor, sampleTensor, category))
+            result.append(FileResult(audio, spectrogram, sample_rate_int, category))
     return result
 
-if __name__ == "main":
-    directory = Path("data")
+if __name__ == "__main__":
+    directory = Path(__file__).parent / "data"
     results = read_audio_files(directory)
+    print("Results:", results)
 
 """
 tfio.audio.spectrogram(
