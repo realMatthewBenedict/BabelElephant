@@ -23,8 +23,8 @@ class FileResult:
     spectrogram_bins: int             # 257
     sample_rate: int
     category: Category
-    rumble_samples: [(int, int)]
-    rumble_frames: [(int, int)]
+    rumble_samples: list[tuple[int, int]] # corresponds to audio_tensor
+    rumble_frames: list[tuple[int, int]] # corresponds to spectrogram_tensor
     call_type: str
 
 def convert_time(row, sample_rate_int, frame_step) -> tuple[tuple]:
@@ -85,6 +85,37 @@ def read_audio_files(index_path: Path, directory: Path) -> list[FileResult]:
             call_type=row["Call_type"]
         ))
     return result
+
+def reconstruct_audio_tensor(audio_orig: tf.Tensor, new_spectrogram: tf.Tensor) -> tf.Tensor:
+    # Original audio
+    stft_original = tf.signal.stft(audio_orig, frame_length=512, frame_step=256, fft_length=512)
+
+    # Modified spectrogram (mel, filtered, etc.)
+    modified_magnitude = tf.abs(new_spectrogram)  # [257, time_frames]
+
+    # Reconstruct with ORIGINAL phase:
+    stft_modified = modified_magnitude * tf.exp(1j * tf.angle(stft_original))
+
+    # Back to audio:
+    audio_reconstruct = tf.signal.inverse_stft(
+        stft_modified, frame_length=512, frame_step=256, fft_length=512
+    )
+    return audio_reconstruct
+
+def save_reconstructed_audio(audio_tensor: tf.Tensor, sample_rate: int, filename: str):
+    # Ensure mono float32 [-1.0, 1.0] and correct dtype
+    audio_mono = tf.squeeze(audio_tensor, axis=-1)  # Remove channels if stereo
+    audio_mono = tf.cast(audio_mono, tf.float32)
+    
+    # Encode as 16-bit PCM WAV
+    wav_bytes = tf.audio.encode(
+        audio_mono, 
+        sample_rate, 
+        name='encoded_wav'
+    )
+    
+    # Save to file
+    tf.io.write_file(filename, wav_bytes)
 
 def convert_to_mel(file_res: FileResult):
     num_spectrogram_bins = file_res.spectrogram_bins
