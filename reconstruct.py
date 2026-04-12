@@ -9,7 +9,7 @@ def reconstruct_audio_tensor(audio_orig: tf.Tensor, new_spectrogram: tf.Tensor) 
         fft_length=FourierProperties.fft_length
     )
 
-    # Modified spectrogram (mel, filtered, etc.)
+    # Modified spectrogram (do NOT pass mel-transformed spectrogram here)
     modified_magnitude = tf.abs(new_spectrogram)  # [257, time_frames]
 
     # Reconstruct with ORIGINAL phase:
@@ -25,7 +25,7 @@ def reconstruct_audio_tensor(audio_orig: tf.Tensor, new_spectrogram: tf.Tensor) 
     return audio_reconstruct
 
 def save_reconstructed_audio(audio_tensor: tf.Tensor, sample_rate: int, filename: str):
-    # Ensure mono float32 [-1.0, 1.0] and correct dtype
+    # This should not be an issue, but this verifies stereo audio not passed
     audio_mono = tf.squeeze(audio_tensor, axis=-1)  # Remove channels if stereo
     audio_mono = tf.cast(audio_mono, tf.float32)
     
