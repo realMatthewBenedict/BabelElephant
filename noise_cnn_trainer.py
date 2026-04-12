@@ -189,3 +189,97 @@ def make_noise_dataset(
     dataset = tf.data.Dataset.from_tensor_slices((x, x))
     dataset = dataset.shuffle(buffer_size=len(x)).batch(patches_per_file).prefetch(tf.data.AUTOTUNE)
     return dataset
+
+
+
+"""remove noise from existing spectrogram"""
+def denoise_spectrogram(
+    file_result: FileResultLike,
+    model: tf.keras.Model,
+    threshold: float,
+    patch_size: Tuple[int, int] = (32, 32),
+    time_step: int = 8,
+    freq_step: int = 8,
+) -> tf.Tensor:
+
+   
+    raw_spectrogram = tf.convert_to_tensor(file_result.spectrogram_tensor, dtype=tf.float32)
+    original_ndim = raw_spectrogram.ndim
+    spectrogram = _normalize_spectrogram(raw_spectrogram, file_result.spectrogram_bins)
+
+    num_time_frames = int(spectrogram.shape[0])
+    num_freq_bins = int(spectrogram.shape[1])
+    if num_time_frames == 0 or num_freq_bins == 0:
+        return raw_spectrogram
+
+    target_mask = ~_build_noise_mask(num_time_frames, file_result.rumble_frames)
+    target_mask = tf.convert_to_tensor(target_mask)
+    target_mask_float = tf.cast(target_mask[:, None, None], tf.float32)
+
+    output = spectrogram * target_mask_float
+
+    pad_top = patch_size[0] // 2
+    pad_left = patch_size[1] // 2
+    pad_mode = "REFLECT" if num_time_frames > pad_top and num_freq_bins > pad_left else "CONSTANT"
+    padded = tf.pad(
+        spectrogram,
+        [[pad_top, pad_top], [pad_left, pad_left], [0, 0]],
+        mode=pad_mode,
+    )
+
+    time_indices = np.arange(pad_top, pad_top + num_time_frames, time_step)
+    target_mask_np = target_mask.numpy()
+    time_indices = [t for t in time_indices if target_mask_np[t - pad_top]]
+    freq_indices = np.arange(pad_left, pad_left + num_freq_bins, freq_step)
+    if len(time_indices) == 0 or len(freq_indices) == 0:
+        return tf.squeeze(output, axis=-1) if original_ndim == 2 else output
+
+    patches = []
+    coords = []
+    for time_center in time_indices:
+        for freq_center in freq_indices:
+            patch = padded[
+                time_center - pad_top : time_center + pad_top + 1,
+                freq_center - pad_left : freq_center + pad_left + 1,
+                :,
+            ]
+            patches.append(patch)
+            coords.append((time_center - pad_top, freq_center - pad_left))
+
+    patches_tensor = tf.stack(patches, axis=0)
+    max_value = tf.maximum(tf.reduce_max(spectrogram), 1e-8)
+    normalized_patches = patches_tensor / max_value
+
+    reconstructed_patches = model.predict(normalized_patches, batch_size=max(1, min(128, normalized_patches.shape[0])), verbose=0)
+    reconstructed_patches = reconstructed_patches * max_value
+
+    errors = np.mean(np.square(patches_tensor.numpy() - reconstructed_patches), axis=(1, 2, 3))
+    noise_like = errors < threshold
+
+    noise_accum = np.zeros((num_time_frames, num_freq_bins, 1), dtype=np.float32)
+    count_accum = np.zeros((num_time_frames, num_freq_bins, 1), dtype=np.float32)
+    for i, (time_start, freq_start) in enumerate(coords):
+        if not noise_like[i]:
+            continue
+        noise_patch = reconstructed_patches[i]
+        noise_accum[
+            time_start : time_start + patch_size[0],
+            freq_start : freq_start + patch_size[1],
+            :,
+        ] += noise_patch
+        count_accum[
+            time_start : time_start + patch_size[0],
+            freq_start : freq_start + patch_size[1],
+            :,
+        ] += 1.0
+
+    avg_noise = noise_accum / np.maximum(count_accum, 1.0)
+    avg_noise = tf.convert_to_tensor(avg_noise, dtype=tf.float32)
+
+    output = output - avg_noise
+    output = tf.maximum(output, 0.0)
+    output = output * target_mask_float
+
+    if original_ndim == 2:
+        return tf.squeeze(output, axis=-1)
+    return output
