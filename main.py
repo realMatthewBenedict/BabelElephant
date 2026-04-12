@@ -6,6 +6,7 @@ from noise_cnn_trainer import train_noise_cnn
 import tensorflow as tf
 import numpy as np
 from main_structures import FileResult
+from graph import graph_spectrogram
 
 def train_and_save_noise_model(
     file_results: list[FileResult],
