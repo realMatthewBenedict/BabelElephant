@@ -5,64 +5,12 @@ import tensorflow as tf
 
 from main_structures import FileResult, FourierProperties
 
-def de_log_enhanced(enhanced_spectrogram: tf.Tensor) -> tf.Tensor:
-    """
-    Attempt to approximately undo the log scaling in enhance_func.
-
-    This is best-effort; coherence and threshold shifts cannot be inverted.
-    """
-    #  enhanced = 10 * log10(ridge_s) * (1 + coherence) + threshold_shifts
-    #  This only undoes the 10 * log10 part, i.e., ridge_s ≈ 10 ** (enhanced / 10)
-    #  and ignores coherence and threshold shifts.
-
-    # Apply in TF so we keep gradients and dtype consistent
-    return 10.0 ** (enhanced_spectrogram / 10.0)
-
-def reconstruct_linear_from_mel(
-    file_res: FileResult,
-    mel_spectrogram: tf.Tensor
+def de_log_enhanced(
+    enhanced_spectrogram: tf.Tensor,
+    allow_negative: bool = True,
 ) -> tf.Tensor:
-    """
-    Attempt to reconstruct the original linear-scale spectrogram from a mel-scaled one.
-
-    This is approximate and lossy because mel-weighting is not invertible.
-
-    Parameters:
-        file_res (FileResult): any file with .sample_rate; shape is not used.
-        mel_spectrogram (tf.Tensor): mel-scaled spectrogram, shape [time, num_mel_bins].
-
-    Returns:
-        tf.Tensor: reconstructed linear spectrogram, shape [time, num_spectrogram_bins].
-    """
-    num_spectrogram_bins = file_res.spectrogram_bins()
-    mel_bins = mel_spectrogram.shape[-1]
-    sample_rate = file_res.sample_rate
-
-    # Recompute the same mel‑weight matrix used in convert_to_mel
-    lower_edge_hertz, upper_edge_hertz = 0.0, 1000.0
-    linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
-        num_mel_bins=mel_bins,
-        num_spectrogram_bins=num_spectrogram_bins,
-        sample_rate=sample_rate,
-        lower_edge_hertz=lower_edge_hertz,
-        upper_edge_hertz=upper_edge_hertz,
-    )  # [num_spectrogram_bins, num_mel_bins]
-
-    # Convert to NumPy and compute pseudo‑inverse
-    W = linear_to_mel_weight_matrix.numpy()  # [F, M]
-    W_pinv = np.linalg.pinv(W)              # [M, F]
-
-    # Convert back to TF
-    W_pinv_tf = tf.convert_to_tensor(W_pinv, dtype=mel_spectrogram.dtype)
-
-    # Invert: mel [T, M] @ W_pinv [M, F] -> [T, F]
-    reconstructed_linear = tf.tensordot(mel_spectrogram, W_pinv_tf, axes=1)
-
-    # Ensure shape is consistent with original
-    recon_shape = tf.TensorShape(mel_spectrogram.shape[:-1].as_list() + [num_spectrogram_bins])
-    reconstructed_linear.set_shape(recon_shape)
-
-    return reconstructed_linear
+    power = 10.0 ** (enhanced_spectrogram / 10.0)
+    return power - 40 # experimental
 
 def reconstruct_audio_tensor(file_props: FileResult, new_spectrogram: tf.Tensor) -> tf.Tensor:
     # Original audio
