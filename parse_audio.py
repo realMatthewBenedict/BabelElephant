@@ -39,6 +39,7 @@ def read_audio_files(index_path: Path, directory: Path) -> list[FileResult]:
         file_path = directory / file_name
         audio_bytes = tf.io.read_file(str(file_path))
         audio, sample_rate = tf.audio.decode_wav(audio_bytes)
+        audio = tf.squeeze(audio, axis=-1)
         sample_rate_int = sample_rate.numpy()
 
         stft = tf.signal.stft(audio,
