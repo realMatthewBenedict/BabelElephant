@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Protocol, Tuple
 
+import json
 import numpy as np
 import tensorflow as tf
 
@@ -39,13 +40,12 @@ def _build_noise_mask(
         mask[start_frame:end_frame] = False
     return mask
 
-
-"""convert noise samples to np array (random samples)"""
 def _sample_noise_patches(
     file_result: FileResult,
     patch_size: Tuple[int, int],
     patches_per_file: int,
 ) -> np.ndarray:
+    """convert noise samples to np array (random samples)"""
     spectrogram = _normalize_spectrogram(
         file_result.spectrogram_tensor,
         file_result.spectrogram_bins(),
@@ -86,8 +86,9 @@ def _sample_noise_patches(
 
     return np.stack(patches, axis=0)
 
-"""autoencoder"""
+
 def _build_autoencoder(input_shape: Tuple[int, int, int]) -> tf.keras.Model:
+    """autoencoder"""
     inputs = tf.keras.Input(shape=input_shape)
     x = tf.keras.layers.Conv2D(32, 3, activation="relu", padding="same")(inputs)
     x = tf.keras.layers.MaxPool2D(2, padding="same")(x)
@@ -102,6 +103,13 @@ def _build_autoencoder(input_shape: Tuple[int, int, int]) -> tf.keras.Model:
     return model
 
 
+import json
+from typing import Iterable, Tuple, List
+from pathlib import Path
+import numpy as np
+import tensorflow as tf
+
+
 def train_noise_cnn(
     file_results: Iterable[FileResult],
     patch_size: Tuple[int, int] = (32, 32),
@@ -112,7 +120,6 @@ def train_noise_cnn(
     validation_split: float = 0.1,
     save_model_path: str | Path | None = None,
 ) -> tuple[tf.keras.Model, float]:
-
     all_patches = []
     for result in file_results:
         patches = _sample_noise_patches(result, patch_size, patches_per_file)
@@ -120,7 +127,7 @@ def train_noise_cnn(
             all_patches.append(patches)
 
     if not all_patches:
-        raise ValueError("No noise patches extracted check frames and spectrogram shape")
+        raise ValueError("No noise patches extracted; check frames and spectrogram shape")
 
     x_train = np.concatenate(all_patches, axis=0).astype(np.float32)
     max_value = np.maximum(np.max(x_train), 1e-8)
@@ -133,7 +140,7 @@ def train_noise_cnn(
         loss="mse",
     )
 
-    model.fit(
+    history = model.fit(
         x_train,
         x_train,
         batch_size=batch_size,
@@ -143,26 +150,71 @@ def train_noise_cnn(
         verbose=2,
     )
 
+    # Compute reconstruction error and threshold
+    reconstructed = model.predict(x_train, batch_size=batch_size)
+    reconstruction_error = np.mean(np.square(reconstructed - x_train), axis=(1, 2, 3))
+    threshold = float(np.mean(reconstruction_error) + 3.0 * np.std(reconstruction_error))
+
+    # Save model and threshold
     if save_model_path is not None:
         save_path = Path(save_model_path)
         if save_path.suffix == "":
             save_path = save_path.with_suffix(".keras")
         save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save model
         model.save(str(save_path))
 
-    reconstructed = model.predict(x_train, batch_size=batch_size)
-    reconstruction_error = np.mean(np.square(reconstructed - x_train), axis=(1, 2, 3))
-    threshold = float(np.mean(reconstruction_error) + 3.0 * np.std(reconstruction_error))
+        # Save threshold in a companion JSON file
+        meta_path = save_path.with_suffix(".threshold.json")
+        with open(meta_path, "w") as f:
+            json.dump({"threshold": threshold, "reconstruction_error_mean": float(np.mean(reconstruction_error))}, f, indent=2)
 
     return model, threshold
 
+def load_noise_cnn(save_path: str | Path) -> tuple[tf.keras.Model, float]:
+    """
+    Load a saved noise CNN autoencoder and its reconstruction threshold.
 
-"""dataset is noise only for training"""
+    Args:
+        save_path: Path to the .keras file or its parent directory.
+
+    Returns:
+        (model, threshold)
+    """
+    save_path = Path(save_path)
+
+    # If given a directory, find the .keras file
+    if save_path.is_dir():
+        keras_files = list(save_path.glob("*.keras"))
+        if not keras_files:
+            raise FileNotFoundError(f"No .keras file found in {save_path}")
+        save_path = keras_files[0]
+
+    if not save_path.exists():
+        raise FileNotFoundError(f"Model file not found: {save_path}")
+
+    # Load model
+    model = tf.keras.models.load_model(str(save_path))
+
+    # Load threshold metadata
+    meta_path = save_path.with_suffix(".threshold.json")
+    if not meta_path.exists():
+        raise FileNotFoundError(f"Threshold metadata not found: {meta_path}")
+
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    threshold = float(meta["threshold"])
+
+    return model, threshold
+
 def make_noise_dataset(
     file_results: Iterable[FileResult],
     patch_size: Tuple[int, int] = (32, 32),
     patches_per_file: int = 256,
 ) -> tf.data.Dataset:
+    """dataset is noise only for training"""
     all_patches = []
     for result in file_results:
         patches = _sample_noise_patches(result, patch_size, patches_per_file)
@@ -179,9 +231,6 @@ def make_noise_dataset(
     dataset = dataset.shuffle(buffer_size=len(x)).batch(patches_per_file).prefetch(tf.data.AUTOTUNE)
     return dataset
 
-
-
-"""remove noise from existing spectrogram"""
 def denoise_spectrogram(
     file_result: FileResult,
     model: tf.keras.Model,
@@ -190,8 +239,7 @@ def denoise_spectrogram(
     time_step: int = 8,
     freq_step: int = 8,
 ) -> tf.Tensor:
-
-   
+    """remove noise from existing spectrogram"""
     raw_spectrogram = tf.convert_to_tensor(file_result.spectrogram_tensor, dtype=tf.float32)
     original_ndim = raw_spectrogram.ndim
     spectrogram = _normalize_spectrogram(raw_spectrogram, file_result.spectrogram_bins())
@@ -228,8 +276,8 @@ def denoise_spectrogram(
     for time_center in time_indices:
         for freq_center in freq_indices:
             patch = padded[
-                time_center - pad_top : time_center + pad_top + 1,
-                freq_center - pad_left : freq_center + pad_left + 1,
+                time_center - pad_top : time_center - pad_top + patch_size[0],
+                freq_center - pad_left : freq_center - pad_left + patch_size[1],
                 :,
             ]
             patches.append(patch)

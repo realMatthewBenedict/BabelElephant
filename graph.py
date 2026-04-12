@@ -2,19 +2,23 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
 
 from main_structures import FileResult
 
 def graph_spectrogram(
     file: FileResult,
+    spectrogram: tf.Tensor | np.ndarray | None,
     max_hz: float | None = None,
     start_time: float = 0.0,
     end_time: float | None = None,
 ):
-    if isinstance(file.spectrogram_tensor, np.ndarray):
+    if spectrogram is None:
         spectrogram_np = file.spectrogram_tensor
+    if isinstance(spectrogram, np.ndarray):
+        spectrogram_np = spectrogram
     else: # assume it's a tf.Tensor still
-        spectrogram_np = file.spectrogram_tensor.numpy()
+        spectrogram_np = spectrogram.numpy()
     spectrogram_T = spectrogram_np.T
     num_bins, num_frames = spectrogram_T.shape
 

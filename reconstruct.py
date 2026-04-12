@@ -5,39 +5,36 @@ import tensorflow as tf
 
 from main_structures import FileResult, FourierProperties
 
-def de_log_enhanced(enhanced_spectrogram: np.ndarray) -> np.ndarray:
+def de_log_enhanced(enhanced_spectrogram: tf.Tensor) -> tf.Tensor:
     """
     Attempt to approximately undo the log scaling in enhance_func.
 
-    This is best‑effort; coherence and threshold shifts cannot be inverted.
+    This is best-effort; coherence and threshold shifts cannot be inverted.
     """
-    # If enhance_func did:
-    #   log_ridge = 10 * np.log10(ridge_s)
-    #   enhanced = log_ridge * (1 + coherence) + threshold_shifts
-    # then this only undoes the log part, assuming ridge_s ≈ 10**(log_ridge / 10)
-    # and ignores coherence and thresholds.
+    #  enhanced = 10 * log10(ridge_s) * (1 + coherence) + threshold_shifts
+    #  This only undoes the 10 * log10 part, i.e., ridge_s ≈ 10 ** (enhanced / 10)
+    #  and ignores coherence and threshold shifts.
 
-    # Here we just do a fake “undo log” (only reasonable if you know
-    # that enhance_func applied no further scaling after log10):
-    return 10 ** (enhanced_spectrogram / 10)
+    # Apply in TF so we keep gradients and dtype consistent
+    return 10.0 ** (enhanced_spectrogram / 10.0)
 
-def reconstruct_linear_from_mel(file_res: FileResult, num_spectrogram_bins: int = 257):
+def reconstruct_linear_from_mel(
+    file_res: FileResult,
+    mel_spectrogram: tf.Tensor
+) -> tf.Tensor:
     """
-    Attempt to reconstruct the original linear‑scale spectrogram from a mel‑scaled one.
+    Attempt to reconstruct the original linear-scale spectrogram from a mel-scaled one.
 
-    This is approximate and lossy because mel‑weighting is not invertible.
+    This is approximate and lossy because mel-weighting is not invertible.
 
     Parameters:
-        file_res (FileResult):
-            Must have spectrogram_tensor = mel_spectrogram of shape [time, num_mel_bins].
-        num_spectrogram_bins (int):
-            Number of linear frequency bins (e.g., 257 for fft_length=512).
+        file_res (FileResult): any file with .sample_rate; shape is not used.
+        mel_spectrogram (tf.Tensor): mel-scaled spectrogram, shape [time, num_mel_bins].
 
     Returns:
-        Linear‑scale spectrogram (tf.Tensor) with shape [time, num_spectrogram_bins],
-        or None if mel_weighting cannot be reconstructed.
+        tf.Tensor: reconstructed linear spectrogram, shape [time, num_spectrogram_bins].
     """
-    mel_spectrogram = file_res.spectrogram_tensor  # [time, num_mel_bins]
+    num_spectrogram_bins = file_res.spectrogram_bins()
     mel_bins = mel_spectrogram.shape[-1]
     sample_rate = file_res.sample_rate
 
@@ -62,9 +59,8 @@ def reconstruct_linear_from_mel(file_res: FileResult, num_spectrogram_bins: int 
     reconstructed_linear = tf.tensordot(mel_spectrogram, W_pinv_tf, axes=1)
 
     # Ensure shape is consistent with original
-    reconstructed_linear.set_shape(
-        tf.TensorShape(mel_spectrogram.shape[:-1].as_list() + [num_spectrogram_bins])
-    )
+    recon_shape = tf.TensorShape(mel_spectrogram.shape[:-1].as_list() + [num_spectrogram_bins])
+    reconstructed_linear.set_shape(recon_shape)
 
     return reconstructed_linear
 
@@ -137,4 +133,4 @@ if __name__ == "__main__":
     from graph import graph_spectrogram
     new_result = read_specific_audio_file(index, Path(__file__).parent / "test", test_file)
     # Centered on selection 19 (rumble from 15.1885 to 21.89300667 seconds)
-    graph_spectrogram(new_result, 1000, 10, 25)
+    graph_spectrogram(new_result, None, 1000, 10, 25)
