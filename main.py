@@ -2,13 +2,14 @@ from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from enhance import enhance_files
 from graph import graph_spectrogram, graph_spectrogram_dual
 from main_structures import FileResult
 from parse_audio import read_audio_files, read_specific_audio_file, convert_to_mel
 from noise_cnn_trainer import train_noise_cnn, load_noise_cnn, denoise_spectrogram
-from reconstruct import de_log_enhanced
+from reconstruct import de_log_enhanced, reconstruct_audio_tensor, save_reconstructed_audio
 
 def train_and_save_noise_model(
     file_results: list[FileResult],
@@ -28,6 +29,14 @@ def graph_model_spectrogram(result: FileResult, model_tuple: tuple[tf.keras.Mode
     model, threshold = model_tuple
     spectrogram = de_log_enhanced(denoise_spectrogram(result, model, threshold))
     graph_spectrogram_dual(result, spectrogram, 1000)
+
+def save_files(results: list[FileResult], model_tuple: tuple[tf.keras.Model, float]) -> None:
+    model, threshold = model_tuple
+    for result in tqdm(results, desc="Saving", unit="file"):
+        spectrogram = de_log_enhanced(denoise_spectrogram(result, model, threshold))
+        audio_reconstruct = reconstruct_audio_tensor(result, spectrogram)
+        output = Path(__file__).parent / "test" / result.file_name
+        save_reconstructed_audio(audio_reconstruct, result.sample_rate, str(output))
 
 def main() -> None:
     # --- Code for loading file data ---
@@ -54,6 +63,7 @@ def main() -> None:
 
     # --- Code for testing model ---
     graph_model_spectrogram(test_result, (model, threshold))
+    save_files(results, (model, threshold))
 
 if __name__ == "__main__":
     main()
