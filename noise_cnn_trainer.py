@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Iterable, Protocol, Tuple
 
 import numpy as np
@@ -63,6 +64,9 @@ def _sample_noise_patches(
 
     num_time_frames = int(spectrogram.shape[0])
     num_freq_bins = int(spectrogram.shape[1])
+    if num_time_frames == 0 or num_freq_bins == 0:
+        return np.zeros((0, patch_size[0], patch_size[1], 1), dtype=np.float32)
+
     noise_mask = _build_noise_mask(num_time_frames, file_result.rumble_frames)
     valid_time_indices = np.where(noise_mask)[0]
     if len(valid_time_indices) == 0:
@@ -70,10 +74,11 @@ def _sample_noise_patches(
 
     pad_top = patch_size[0] // 2
     pad_left = patch_size[1] // 2
+    pad_mode = "REFLECT" if num_time_frames > pad_top and num_freq_bins > pad_left else "CONSTANT"
     padded = tf.pad(
-        spectrogram[:, :, tf.newaxis],
+        spectrogram,
         [[pad_top, pad_top], [pad_left, pad_left], [0, 0]],
-        mode="REFLECT",
+        mode=pad_mode,
     )
 
     rng = np.random.default_rng()
@@ -81,9 +86,11 @@ def _sample_noise_patches(
     for _ in range(patches_per_file):
         time_center = rng.choice(valid_time_indices) + pad_top
         freq_center = rng.integers(pad_left, num_freq_bins + pad_left)
+        time_start = time_center - pad_top
+        freq_start = freq_center - pad_left
         patch = padded[
-            time_center - pad_top : time_center + pad_top + 1,
-            freq_center - pad_left : freq_center + pad_left + 1,
+            time_start : time_start + patch_size[0],
+            freq_start : freq_start + patch_size[1],
             :,
         ]
         patches.append(patch.numpy())
@@ -114,6 +121,7 @@ def train_noise_cnn(
     batch_size: int = 64,
     learning_rate: float = 1e-3,
     validation_split: float = 0.1,
+    save_model_path: str | Path | None = None,
 ) -> tuple[tf.keras.Model, float]:
 
     all_patches = []
@@ -146,13 +154,21 @@ def train_noise_cnn(
         verbose=2,
     )
 
+    if save_model_path is not None:
+        save_path = Path(save_model_path)
+        if save_path.suffix == "":
+            save_path = save_path.with_suffix(".keras")
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        model.save(str(save_path))
+
     reconstructed = model.predict(x_train, batch_size=batch_size)
     reconstruction_error = np.mean(np.square(reconstructed - x_train), axis=(1, 2, 3))
     threshold = float(np.mean(reconstruction_error) + 3.0 * np.std(reconstruction_error))
 
     return model, threshold
 
-    """dataset is noise only for training"""
+
+"""dataset is noise only for training"""
 def make_noise_dataset(
     file_results: Iterable[FileResultLike],
     patch_size: Tuple[int, int] = (32, 32),
