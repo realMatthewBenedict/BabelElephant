@@ -1,7 +1,11 @@
 from pathlib import Path
 
-from parse_audio import read_audio_files
-
+from parse_audio import read_audio_files, convert_to_mel
+import enhance
+from noise_cnn_trainer import train_noise_cnn
+import tensorflow as tf
+import numpy as np
+from main_structures import FileResult
 
 def train_and_save_noise_model(
     file_results: list[FileResult],
@@ -23,8 +27,21 @@ if __name__ == "__main__":
     index = Path(__file__).parent / "index.csv"
     results = read_audio_files(index, directory)
     print(f"{len(results)} files parsed")
-    #convert_to_mel(results[0])
+    
     print(f"Loaded {len(results)} files for training")
-
+    
+    # --- Code for running enhancements ---
+    enhanced_files = []
+    i = 0
+    for file in results:
+        spectrogram_np = file.spectrogram_tensor.numpy()
+        spectrogram_db = 10 * np.log10(spectrogram_np + 1e-10)
+        enhanced = enhance.enhance_func(spectrogram_np)
+        enhanced_file = results[i]
+        enhanced_file.spectrogram_tensor = enhanced
+        enhanced_files.append(enhanced_file)
+        i += 1
+    # -------------------------------------
+    
     save_path = Path(__file__).parent / "saved_models" / "noise_autoencoder.keras"
-    train_and_save_noise_model(results, save_path=save_path)
+    train_and_save_noise_model(enhanced_files, save_path=save_path)
