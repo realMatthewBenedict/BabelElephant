@@ -30,14 +30,12 @@ if __name__ == "__main__":
     index = Path(__file__).parent / "index.csv"
     results_dict = read_audio_files(index, directory)
     results = list(results_dict.values())
-    print(f"Loaded {len(results)} files for training")
     
     # --- Code for running enhancements ---
-    enhanced_files = enhance_files(results)
-    #enhanced_files = enhance_files([results_dict["1989-06_airplane_01.wav"]])
-    print(f"Enhanced {len(enhanced_files)} files")
+    enhance_files(results)
+    #enhance_files([results_dict["1989-06_airplane_01.wav"]])
     #graph_spectrogram(enhanced_files[0], 1000, 10, 25)
-    
+
     # --- Code for training model ---
     save_path = Path(__file__).parent / "saved_models" / "noise_autoencoder.keras"
-    train_and_save_noise_model(enhanced_files, save_path=save_path)
+    train_and_save_noise_model(results, save_path=save_path)

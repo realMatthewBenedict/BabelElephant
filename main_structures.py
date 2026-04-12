@@ -27,8 +27,8 @@ class FileResult:
     frame_step: int
     fft_length: int
 
-    def spectrogram_bins() -> int:
-        return fft_length // 2 + 1
+    def spectrogram_bins(self) -> int:
+        return self.fft_length // 2 + 1
 
 class FourierProperties:
     frame_length = 512

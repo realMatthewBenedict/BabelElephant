@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import tensorflow as tf
+from tqdm import tqdm
 
 from main_structures import Category, FourierProperties, FileResult
 
@@ -77,7 +78,7 @@ def read_audio_files(index_path: Path, directory: Path) -> dict[str, FileResult]
     results: dict[str, FileResult] = {}
 
     # Only read files with indexed rumbles
-    for index, row in df.iterrows():
+    for index, row in tqdm(df.iterrows(), total=len(df), desc="Reading audio files"):
         # Mutate result dictionary
         read_audio_file_internal(results, row, directory)
     return results
@@ -97,7 +98,8 @@ def read_specific_audio_file(index_path: Path, directory: Path, basename: str) -
     return result[basename]
 
 def convert_to_mel(file_res: FileResult):
-    num_spectrogram_bins = file_res.spectrogram_bins
+    """A lossy conversion to mel-scale spectrogram"""
+    num_spectrogram_bins = file_res.spectrogram_bins()
     lower_edge_hertz, upper_edge_hertz, num_mel_bins = 0.0, 1000.0, 80
     linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
         num_mel_bins, num_spectrogram_bins, file_res.sample_rate, lower_edge_hertz,

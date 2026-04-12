@@ -1,15 +1,16 @@
-import numpy as np
-from scipy.ndimage import gaussian_filter, gaussian_laplace
-from skimage.filters import frangi
 import time
 
+import numpy as np
+from scipy.ndimage import gaussian_filter, gaussian_laplace
+import tensorflow as tf
+from tqdm import tqdm
+
+from main_structures import FileResult
 
 def ridge_filter(s):
     log = -gaussian_laplace(s, sigma=1.5)
-    ridge_s = np.clip(log, 0, None)
-    ridge_s = np.clip(ridge_s, 1e-10, None)
+    ridge_s = np.clip(log, 1e-10, None)
     return ridge_s + s   # additive rather than replacing original signal
-
 
 def compute_structure_tensor(s, sigma=1.0):
     """
@@ -74,43 +75,39 @@ def threshold_based_enhancement(s1: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Further enhanced spectrogram
     """
-    # Calculate threshold values from s1
-    threshold1 = np.percentile(s1, 25)   # 25th percentile (Q1)
-    threshold2 = np.percentile(s1, 50)   # 50th percentile (median)
-    threshold3 = np.percentile(s1, 75)   # 75th percentile (Q3)
+    threshold1 = np.percentile(s1, 25)
+    threshold2 = np.percentile(s1, 50)
+    threshold3 = np.percentile(s1, 75)
 
-    final_spectrogram = np.empty_like(s1)
+    result = np.copy(s1)
 
-    for i in range(s1.shape[0]):
-        for j in range(s1.shape[1]):
-            if s1[i, j] > threshold3:
-                final_spectrogram[i, j] = s1[i, j] + 5
-            elif s1[i, j] > threshold2:
-                final_spectrogram[i, j] = s1[i, j] + 2
-            elif s1[i, j] > threshold1:
-                final_spectrogram[i, j] = s1[i, j] - 2
-            else:
-                final_spectrogram[i, j] = s1[i, j] - 5
+    # Above Q3
+    mask3 = s1 > threshold3
+    result[mask3] += 5
 
-    return final_spectrogram
+    # Q2–Q3
+    mask2 = (s1 <= threshold3) & (s1 > threshold2)
+    result[mask2] += 2
+
+    # Q1–Q2
+    mask1 = (s1 <= threshold2) & (s1 > threshold1)
+    result[mask1] -= 2
+
+    # Q1 and below
+    mask0 = s1 <= threshold1
+    result[mask0] -= 5
+
+    return result
 
 def enhance_func(spectrogram):
+    """Warning: These enhancements change the scaling nonlinearly and cannot be fully reversed."""
     enhanced = compute_structure_tensor(spectrogram, sigma=3.0)
     enhanced = threshold_based_enhancement(enhanced)
     return enhanced
 
-from main_structures import FileResult
-
-def enhance_files(results: list[FileResult]) -> list[FileResult]:
-    enhanced_files = []
-    i = 0
-    for file in results:
+def enhance_files(results: list[FileResult]) -> None:
+    for i, file in enumerate(tqdm(results, desc="Enhancing spectrograms")):
         spectrogram_np = file.spectrogram_tensor.numpy()
-        spectrogram_db = 10 * np.log10(spectrogram_np + 1e-10)
+        orig_dtype = file.spectrogram_tensor.dtype
         enhanced = enhance_func(spectrogram_np)
-        enhanced_file = results[i]
-        enhanced_file.spectrogram_tensor = enhanced
-        enhanced_files.append(enhanced_file)
-        i += 1
-    
-    return enhanced_files
+        results[i].spectrogram_tensor = tf.convert_to_tensor(enhanced, dtype=orig_dtype)
