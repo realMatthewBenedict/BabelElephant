@@ -18,6 +18,15 @@ def convert_time(row: pd.Series, audio_tensor: tf.Tensor, sample_rate_int: int, 
 
     return ((start_sample, end_sample), (start_frame, end_frame))
 
+def get_spectrogram(audio_tensor: tf.Tensor, sample_rate: int) -> tf.Tensor:
+    frame_step = FourierProperties.frame_step_for_sample_rate(sample_rate)
+    stft = tf.signal.stft(audio_tensor,
+        frame_length=FourierProperties.frame_length,
+        frame_step=frame_step,
+        fft_length=FourierProperties.fft_length
+    )
+    return tf.abs(stft)
+
 def read_audio_file_internal(result: dict[str, FileResult], row: pd.Series, directory: Path) -> None:
     file_name = row["Sound_file"]
 
@@ -37,14 +46,10 @@ def read_audio_file_internal(result: dict[str, FileResult], row: pd.Series, dire
     audio, sample_rate = tf.audio.decode_wav(audio_bytes)
     audio = tf.squeeze(audio, axis=-1)
     sample_rate_int = sample_rate.numpy()
-    frame_step = FourierProperties.frame_step_for_sample_rate(sample_rate_int)
 
-    stft = tf.signal.stft(audio,
-        frame_length=FourierProperties.frame_length,
-        frame_step=frame_step,
-        fft_length=FourierProperties.fft_length
-    )
-    spectrogram = tf.abs(stft)
+    frame_step = FourierProperties.frame_step_for_sample_rate(sample_rate_int)
+    spectrogram = get_spectrogram(audio, sample_rate_int)
+    sample, frame = convert_time(row, audio, sample_rate_int, frame_step)
 
     category = Category(0)
     path = file_path.name.lower()
@@ -56,8 +61,6 @@ def read_audio_file_internal(result: dict[str, FileResult], row: pd.Series, dire
         category |= Category.Generator
     if "vehicle" in path:
         category |= Category.Vehicle
-    
-    sample, frame = convert_time(row, audio, sample_rate_int, frame_step)
 
     result[file_name] = FileResult(
         file_name=file_name,

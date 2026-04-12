@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 from main_structures import FileResult
+from parse_audio import get_spectrogram
 
 def _prepare_spectrogram_data(
     file: FileResult,
@@ -18,7 +19,7 @@ def _prepare_spectrogram_data(
     trimmed to [start_time, end_time] and [0, max_hz].
     """
     if spectrogram is None:
-        sp = file.spectrogram_tensor
+        sp = get_spectrogram(file.audio_tensor, file.sample_rate)
     else:
         sp = spectrogram
 
@@ -173,5 +174,4 @@ if __name__ == "__main__":
     from parse_audio import read_specific_audio_file
     result = read_specific_audio_file(index, directory, test_file)
     # Centered on selection 19 (rumble from 15.1885 to 21.89300667 seconds)
-    # TODO: What is the magnitude here??
     graph_spectrogram(result, None, 1000, 10, 25)

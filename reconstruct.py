@@ -2,17 +2,20 @@ from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
+from noise_cnn_trainer import denoise_spectrogram
 from main_structures import FileResult, FourierProperties
 
 def de_log_enhanced(
     enhanced_spectrogram: tf.Tensor,
     allow_negative: bool = True,
 ) -> tf.Tensor:
-    power = 10.0 ** (enhanced_spectrogram / 10.0)
-    return power - 40 # experimental
+    """Approximately undo log scale conversion"""
+    return 10.0 ** (enhanced_spectrogram / 10.0)
 
 def reconstruct_audio_tensor(file_props: FileResult, new_spectrogram: tf.Tensor) -> tf.Tensor:
+    """Use original audio phase information and magnitude of spectrogram to reconstruct full audio tensor"""
     # Original audio
     stft_original = tf.signal.stft(file_props.audio_tensor,
         frame_length=file_props.frame_length,
@@ -39,6 +42,7 @@ def reconstruct_audio_tensor(file_props: FileResult, new_spectrogram: tf.Tensor)
     return audio_reconstruct
 
 def save_reconstructed_audio(audio_tensor: tf.Tensor, sample_rate: int, filename: str):
+    """Save reconstructed audio tensor"""
     # Ensure 2D [T, 1]
     if len(audio_tensor.shape) == 1:
         audio_2d = tf.reshape(audio_tensor, [-1, 1])
@@ -50,35 +54,44 @@ def save_reconstructed_audio(audio_tensor: tf.Tensor, sample_rate: int, filename
     wav_bytes = tf.audio.encode_wav(audio_2d, sample_rate)
     tf.io.write_file(filename, wav_bytes)
 
+def save_files(results: list[FileResult], model_tuple: tuple[tf.keras.Model, float]) -> None:
+    """Use network to reconstruct and save audio from multiple files"""
+    model, threshold = model_tuple
+    for result in tqdm(results, desc="Saving", unit="file"):
+        spectrogram = de_log_enhanced(denoise_spectrogram(result, model, threshold))
+        audio_reconstruct = reconstruct_audio_tensor(result, spectrogram)
+        output = Path(__file__).parent / "test" / result.file_name
+        save_reconstructed_audio(audio_reconstruct, result.sample_rate, str(output))
 
 if __name__ == "__main__":
-    directory = Path(__file__).parent / "data"
-    index = Path(__file__).parent / "index.csv"
-    test_file = "1989-06_airplane_01.wav"
-    
-    from parse_audio import read_specific_audio_file
-    result = read_specific_audio_file(index, directory, test_file)
-    
-    spectrogram_mult = tf.math.scalar_mul(2.0, result.spectrogram_tensor)
-    audio_reconstruct = reconstruct_audio_tensor(result, spectrogram_mult)
-    output = Path(__file__).parent / "test" / "1989-06_airplane_01.wav"
-    save_reconstructed_audio(audio_reconstruct, result.sample_rate, str(output))
-
-if __name__ == "__main__":
+    # --- Code for loading file data ---
     directory = Path(__file__).parent / "data"
     index = Path(__file__).parent / "index.csv"
     test_file = "1989-06_airplane_01.wav"
 
     from parse_audio import read_specific_audio_file
-    result = read_specific_audio_file(index, directory, test_file)
+    results_dict = {test_file : read_specific_audio_file(index, directory, test_file)}
+    results = list(results_dict.values())
+    test_result = results_dict[test_file]
     
-    spectrogram_mult = tf.math.scalar_mul(2.0, result.spectrogram_tensor)
-    audio_reconstruct = reconstruct_audio_tensor(result, spectrogram_mult)
-    output = Path(__file__).parent / "test" / "1989-06_airplane_01.wav"
-    save_reconstructed_audio(audio_reconstruct, result.sample_rate, str(output))
-    
+    # --- Code for running enhancements ---
+    from enhance import enhance_files
+    enhance_files(results)
+
+    save_path = Path(__file__).parent / "saved_models" / "noise_autoencoder.keras"
+    from noise_cnn_trainer import train_noise_cnn, load_noise_cnn, denoise_spectrogram
+    try:
+        model, threshold = load_noise_cnn(save_path)
+        print("Recovered model from saved data!")
+    except FileNotFoundError as e:
+        print("Training new model!")
+        model, threshold = train_and_save_noise_model(results, save_path=save_path)
+
+    # --- Code for testing model ---
+    save_files(results, (model, threshold))
+
     # Test the reconstruction by reading it and plotting its spectrogram
     from graph import graph_spectrogram
     new_result = read_specific_audio_file(index, Path(__file__).parent / "test", test_file)
     # Centered on selection 19 (rumble from 15.1885 to 21.89300667 seconds)
-    graph_spectrogram(new_result, None, 1000, 10, 25)
+    graph_spectrogram(new_result, None, 1000)
