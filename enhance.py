@@ -98,3 +98,19 @@ def enhance_func(spectrogram):
     enhanced = compute_structure_tensor(spectrogram, sigma=3.0)
     enhanced = threshold_based_enhancement(enhanced)
     return enhanced
+
+from main_structures import FileResult
+
+def enhance_files(results: list[FileResult]) -> list[FileResult]:
+    enhanced_files = []
+    i = 0
+    for file in results:
+        spectrogram_np = file.spectrogram_tensor.numpy()
+        spectrogram_db = 10 * np.log10(spectrogram_np + 1e-10)
+        enhanced = enhance_func(spectrogram_np)
+        enhanced_file = results[i]
+        enhanced_file.spectrogram_tensor = enhanced
+        enhanced_files.append(enhanced_file)
+        i += 1
+    
+    return enhanced_files

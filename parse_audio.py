@@ -17,63 +17,84 @@ def convert_time(row: pd.Series, audio_tensor: tf.Tensor, sample_rate_int: int, 
 
     return ((start_sample, end_sample), (start_frame, end_frame))
 
-def read_audio_files(index_path: Path, directory: Path) -> list[FileResult]:
+def read_audio_file_internal(result: dict[str, FileResult], row: pd.Series, directory: Path) -> None:
+    file_name = row["Sound_file"]
+
+    if file_name in result:
+        sample, frame = convert_time(row,
+            result[file_name].audio_tensor,
+            result[file_name].sample_rate,
+            result[file_name].frame_step
+        )
+        # These arrays will be sorted in the same order incoming file is sorted
+        result[file_name].rumble_samples.append(sample)
+        result[file_name].rumble_frames.append(frame)
+        return
+
+    file_path = directory / file_name
+    audio_bytes = tf.io.read_file(str(file_path))
+    audio, sample_rate = tf.audio.decode_wav(audio_bytes)
+    audio = tf.squeeze(audio, axis=-1)
+    sample_rate_int = sample_rate.numpy()
+    frame_step = FourierProperties.frame_step_for_sample_rate(sample_rate_int)
+
+    stft = tf.signal.stft(audio,
+        frame_length=FourierProperties.frame_length,
+        frame_step=frame_step,
+        fft_length=FourierProperties.fft_length
+    )
+    spectrogram = tf.abs(stft)
+
+    category = Category(0)
+    path = file_path.name.lower()
+    if "airplane" in path:
+        category |= Category.Airplane
+    if "background" in path:
+        category |= Category.Background
+    if "generator" in path:
+        category |= Category.Generator
+    if "vehicle" in path:
+        category |= Category.Vehicle
+    
+    sample, frame = convert_time(row, audio, sample_rate_int, frame_step)
+
+    result[file_name] = FileResult(
+        file_name=file_name,
+        audio_tensor=audio,
+        spectrogram_tensor=spectrogram,
+        sample_rate=sample_rate_int,
+        category=category,
+        rumble_samples=[sample],
+        rumble_frames=[frame],
+        call_type=row["Call_type"],
+        frame_length=FourierProperties.frame_length,
+        frame_step=frame_step,
+        fft_length=FourierProperties.fft_length
+    )
+
+def read_audio_files(index_path: Path, directory: Path) -> dict[str, FileResult]:
+    df = pd.read_csv(str(index_path), index_col="Selection")
+    results: dict[str, FileResult] = {}
+
+    # Only read files with indexed rumbles
+    for index, row in df.iterrows():
+        # Mutate result dictionary
+        read_audio_file_internal(results, row, directory)
+    return results
+
+def read_specific_audio_file(index_path: Path, directory: Path, basename: str) -> FileResult:
     df = pd.read_csv(str(index_path), index_col="Selection")
     result: dict[str, FileResult] = {}
 
     # Only read files with indexed rumbles
     for index, row in df.iterrows():
-        file_name = row["Sound_file"]
-
-        # Assume CSV is sorted by file
-        if file_name in result:
-            sample, frame = convert_time(row,
-                result[file_name].audio_tensor,
-                result[file_name].sample_rate,
-                FourierProperties.frame_step
-            )
-            result[file_name].rumble_samples.append(sample)
-            result[file_name].rumble_frames.append(frame)
+        # Ignore other files
+        if row["Sound_file"] != basename:
             continue
 
-        file_path = directory / file_name
-        audio_bytes = tf.io.read_file(str(file_path))
-        audio, sample_rate = tf.audio.decode_wav(audio_bytes)
-        audio = tf.squeeze(audio, axis=-1)
-        sample_rate_int = sample_rate.numpy()
-
-        stft = tf.signal.stft(audio,
-            frame_length=FourierProperties.frame_length,
-            frame_step=FourierProperties.frame_step,
-            fft_length=FourierProperties.fft_length
-        )
-        spectrogram = tf.abs(stft)
-
-        category = Category(0)
-        path = file_path.name.lower()
-        if "airplane" in path:
-            category |= Category.Airplane
-        if "background" in path:
-            category |= Category.Background
-        if "generator" in path:
-            category |= Category.Generator
-        if "vehicle" in path:
-            category |= Category.Vehicle
-        
-        sample, frame = convert_time(row, audio, sample_rate_int, FourierProperties.frame_step)
-
-        result[file_name] = FileResult(
-            file_name=file_name,
-            audio_tensor=audio,
-            spectrogram_tensor=spectrogram, 
-            spectrogram_bins=FourierProperties.fft_length // 2 + 1,
-            sample_rate=sample_rate_int,
-            category=category,
-            rumble_samples=[sample],
-            rumble_frames=[frame],
-            call_type=row["Call_type"]
-        )
-    return list(result.values())
+        # Mutate result dictionary
+        read_audio_file_internal(result, row, directory)
+    return result[basename]
 
 def convert_to_mel(file_res: FileResult):
     num_spectrogram_bins = file_res.spectrogram_bins

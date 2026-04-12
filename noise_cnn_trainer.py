@@ -6,18 +6,7 @@ from typing import Iterable, Protocol, Tuple
 import numpy as np
 import tensorflow as tf
 
-
-class FileResultLike(Protocol):
-    file_name: str
-    audio_tensor: tf.Tensor
-    spectrogram_tensor: tf.Tensor
-    spectrogram_bins: int
-    sample_rate: int
-    category: object
-    rumble_samples: list[Tuple[int, int]]
-    rumble_frames: list[Tuple[int, int]]
-    call_type: str
-
+from main_structures import FileResult
 
 def _normalize_spectrogram(
     spectrogram: tf.Tensor,
@@ -53,13 +42,13 @@ def _build_noise_mask(
 
 """convert noise samples to np array (random samples)"""
 def _sample_noise_patches(
-    file_result: FileResultLike,
+    file_result: FileResult,
     patch_size: Tuple[int, int],
     patches_per_file: int,
 ) -> np.ndarray:
     spectrogram = _normalize_spectrogram(
         file_result.spectrogram_tensor,
-        file_result.spectrogram_bins,
+        file_result.spectrogram_bins(),
     )
 
     num_time_frames = int(spectrogram.shape[0])
@@ -114,7 +103,7 @@ def _build_autoencoder(input_shape: Tuple[int, int, int]) -> tf.keras.Model:
 
 
 def train_noise_cnn(
-    file_results: Iterable[FileResultLike],
+    file_results: Iterable[FileResult],
     patch_size: Tuple[int, int] = (32, 32),
     patches_per_file: int = 256,
     epochs: int = 20,
@@ -170,7 +159,7 @@ def train_noise_cnn(
 
 """dataset is noise only for training"""
 def make_noise_dataset(
-    file_results: Iterable[FileResultLike],
+    file_results: Iterable[FileResult],
     patch_size: Tuple[int, int] = (32, 32),
     patches_per_file: int = 256,
 ) -> tf.data.Dataset:
@@ -194,7 +183,7 @@ def make_noise_dataset(
 
 """remove noise from existing spectrogram"""
 def denoise_spectrogram(
-    file_result: FileResultLike,
+    file_result: FileResult,
     model: tf.keras.Model,
     threshold: float,
     patch_size: Tuple[int, int] = (32, 32),
@@ -205,7 +194,7 @@ def denoise_spectrogram(
    
     raw_spectrogram = tf.convert_to_tensor(file_result.spectrogram_tensor, dtype=tf.float32)
     original_ndim = raw_spectrogram.ndim
-    spectrogram = _normalize_spectrogram(raw_spectrogram, file_result.spectrogram_bins)
+    spectrogram = _normalize_spectrogram(raw_spectrogram, file_result.spectrogram_bins())
 
     num_time_frames = int(spectrogram.shape[0])
     num_freq_bins = int(spectrogram.shape[1])
