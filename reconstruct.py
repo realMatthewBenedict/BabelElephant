@@ -73,6 +73,9 @@ if __name__ == "__main__":
     results_dict = {test_file : read_specific_audio_file(index, directory, test_file)}
     results = list(results_dict.values())
     test_result = results_dict[test_file]
+
+    from graph import graph_spectrogram
+    graph_spectrogram(test_result, None, 1000)
     
     # --- Code for running enhancements ---
     from enhance import enhance_files
@@ -91,7 +94,6 @@ if __name__ == "__main__":
     save_files(results, (model, threshold))
 
     # Test the reconstruction by reading it and plotting its spectrogram
-    from graph import graph_spectrogram
     new_result = read_specific_audio_file(index, Path(__file__).parent / "test", test_file)
     # Centered on selection 19 (rumble from 15.1885 to 21.89300667 seconds)
     graph_spectrogram(new_result, None, 1000)
